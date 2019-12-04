@@ -1,59 +1,73 @@
 import sys
 import requests
+import numpy as np
 import cv2
-
-face_classifier = cv2.CascadeClassifier(cv2.data.haarcascades+'haarcascade_frontalface_default.xml')
-
-def open_image(get_url):
-	try:
-		res = requests.get(get_url)
-		msg = res.json()
-		url = requests.get(msg['image_url'])
-		url.raise_for_status()
-	except Exception:
-		print('Error occurred')
-
-	img_name = 'test.jpg'
-	with open(img_name, 'wb') as f:
-		for chunk in url.iter_content(chunk_size=512):
-			f.write(chunk)
-	return img_name
+import json
 
 
-def img_tiles(img_name):
-    img = cv2.imread(img_name)
-    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    (row, col) = img_gray.shape
-    square_size = row // 8
-    for i in range(row // square_size):
-        for j in range(col // square_size):            
-            tile = img_gray[i*square_size:i*square_size+square_size,j*square_size:j*square_size+square_size]
-            yield(i, j, tile)
 
-def face_or_not(tile):
-    res = face_classifier.detectMultiScale(tile, scaleFactor=1.3, minNeighbors=5)
-    return len(res) > 0
+def show_image(image, name="image"):
+  cv2.imshow(name,image)
+def close_images():
+  cv2.waitKey(0)
+  cv2.destroyAllWindows()
 
-def result(res, post_url):
-    res = requests.post(post_url+'&playground=1', json={'face_tiles': res})
-    return res.text
+if len(sys.argv) >= 2:
+  access_token = sys.argv[1]
+else:
+  access_token = "a43e487fb3a5b7be"
+  print(f"No token given. Using default token: {access_token}")
+url_request = requests.get('https://hackattic.com/challenges/basic_face_detection/problem?access_token='+access_token)
+data = url_request.text
 
-def face_predict(get_url, post_url):
-	img_name = open_image(get_url)
-	res = []
-	for i, j, tile in img_tiles(img_name):
-		if face_or_not(tile):
-			res.append([i,j])
-	msg = result(res, post_url)
-	return msg
+url = json.loads(data)["image_url"]
 
-if __name__ == '__main__':
-	token = 'a43e487fb3a5b7be'
-	get_url = 'https://hackattic.com/challenges/basic_face_detection/problem?access_token='+token
-	post_url = 'https://hackattic.com/challenges/basic_face_detection/solve?access_token='+token
-	post_msg = face_predict(get_url, post_url)
+image_request = requests.get(url,stream=True)
+image_raw = image_request.raw
+image = np.asarray(bytearray(image_raw.read()), dtype="uint8")
+image = cv2.imdecode(image, cv2.IMREAD_COLOR)
 
-	print(post_msg)
+gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+images = tuple(
+  tuple(gray[i*100:i*100+100,j*100:j*100+100] for j in range(8))
+    for i in range(8)
+)
+
+cascPath = "haarcascade_frontalface_default.xml"
+
+faceCascade = cv2.CascadeClassifier(cascPath)
+
+def detect_face(img, index: str = "99") -> bool:
+  faces = faceCascade.detectMultiScale(
+      img,
+      scaleFactor=1.1,
+      minNeighbors=5,
+      minSize=(30, 30),
+
+  )
+  num_faces_found = len(faces)
+
+  x_offset = int(index[1])*100
+  y_offset = int(index[0])*100
+  for (x, y, w, h) in faces:
+    x+=x_offset
+    y+=y_offset
+    cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
+
+  return True if num_faces_found >= 1 else False
+
+detected_faces = []
+
+for i in range(8):
+  for j in range(8):
+    if detect_face(images[i][j],str(i)+str(j)):
+      detected_faces.append([i,j])
+
+system_output = f'{{"face_tiles": {detected_faces}}}'
+sys.stdout.write(system_output)
 
 
-    
+show_image(image, "after detection")
+
+close_images()
